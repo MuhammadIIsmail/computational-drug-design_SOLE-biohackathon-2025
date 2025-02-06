@@ -1,0 +1,99 @@
+#Source the gromacs executer
+source /usr/local/gromacs/bin/GMXRC
+
+#prepare protein gro file
+
+gmx pdb2gmx -f protein.pdb -ignh 
+(choose ff (1) and water model(1))
+
+#prepare ligand gro files
+#get the pdb file downloaded from SwissParam (LIG.pdb)
+
+gmx editconf -f LIG.pdb -o LIG.gro
+
+#combine lig and protein gro files in "conf.gro" with adjusting the number of the atoms at line 2
+
+#edit topol.top file (#include "LIG.itp") after the include statement of the main forcefield
+
+# Add LIG number of molecules at the end of topol.top file
+
+#change the name of the ligand to LIG in LIG.itp (under [molecule type])
+
+#prepare the box parameters
+
+gmx editconf -f conf.gro -d 1.0 -bt cubic -o box.gro
+
+#solvate 
+
+gmx solvate -cp box.gro -cs spc216.gro -p topol.top -o box_sol.gro
+
+#grompp
+
+gmx grompp -f ions.mdp -c box_sol.gro -p topol.top -o ion.tpr -maxwarn 3
+
+#neutralize the system charges
+
+gmx genion -s ion.tpr -p topol.top -conc 0.1 -neutral -o box_sol_ion.gro
+(choose SOL)
+
+#another option
+
+#gmx genion -s ion.tpr -p topol.top -pname NA -nname CL -neutral -o box_sol_ion.gro
+
+#restraining the ligand
+
+gmx make_ndx -f LIG.gro -o index_LIG.ndx
+
+> 0 & ! a H*
+> q
+
+gmx genrestr -f LIG.gro -n index_LIG.ndx -o posre_LIG.itp -fc 1000 1000 1000
+
+> 3
+
+#add the following to the topol.top
+
+; Ligand position restraints
+#ifdef POSRES
+#include "LIG.itp"
+#include "posre_LIG.itp"
+#else
+#include "LIG.itp"
+#endif
+
+#merge the groups (Protein and LIG) in one group for temperature coupling
+
+gmx make_ndx -f box_sol_ion.gro -o index.ndx
+
+> 1 | 13 
+> q
+
+#change (tc-grps) in nvt.mdp and npt.mdp into "Protein_LIG and Water_ions" for temperature coupling
+#Or you can specify temperature coupling for each species, however, it is not recommended.
+
+
+#energy minimization
+
+gmx grompp -f em.mdp -c box_sol_ion.gro -p topol.top -o em.tpr 
+
+#invoke mdrun to carry out energy minimization
+
+gmx mdrun -v -deffnm em
+
+#NVT equilibration
+
+gmx grompp -f nvt.mdp -c em.gro -r em.gro -p topol.top -n index.ndx -o nvt.tpr
+
+gmx mdrun -v -deffnm nvt
+
+#NPT equilibration
+
+gmx grompp -f npt.mdp -c nvt.gro -t nvt.cpt -r nvt.gro -p topol.top -n index.ndx -o npt.tpr
+
+gmx mdrun -v -deffnm npt
+
+#Production MD
+
+gmx grompp -f md.mdp -c npt.gro -t npt.cpt -p topol.top -n index.ndx -o md.tpr
+
+gmx mdrun -v -deffnm md
